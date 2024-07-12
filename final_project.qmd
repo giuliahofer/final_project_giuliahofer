@@ -1,0 +1,310 @@
+---
+title: "Final project"
+author: "Giulia Hofer"
+format: 
+  dashboard:
+    nav-buttons: [github]
+    github: https://github.com/YOUR_URL
+theme: lux
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+# Load packages 
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, here, sf, stringr, bslib, bsicons, shiny, 
+               plotly, htmltools, reactable, rnaturalearth, 
+               countrycode, visdat, rnaturalearthdata, janitor, dplyr, ggplot2)
+
+# view data
+sanitation <- read_csv(here("data/at_least_basic_sanitation_overall_access_percent.csv"))
+newborn_deaths <- read_csv(here("data/newborn_deaths.csv"))
+```
+
+```{r results='hide', message=FALSE, warning = FALSE}
+# Data visualisation
+#vis_dat(sanitation)
+#vis_dat(newborn_deaths)
+
+# Data cleaning 
+
+# Pivot data
+
+sanitation_long <- sanitation %>%
+  select(country, `2000`:`2015`) %>%
+  pivot_longer(
+  cols = -country,  
+  names_to = "year", 
+  values_to = "sanitation_levels")  %>%  
+  mutate(year = as.numeric(year))
+
+head(sanitation_long)
+
+
+newborn_deaths_long <- newborn_deaths %>%
+  select(country, `2000`:`2015`) %>%  
+  pivot_longer(
+    cols = -country,  
+    names_to = "year",
+    values_to = "total_cases"
+  )
+
+head(newborn_deaths_long)
+
+
+# Convert k
+newborn_deaths_long <- newborn_deaths_long %>%
+  mutate(
+    # Convert year to numeric
+    year = as.numeric(year),
+    # Remove 'k' and 'M' and convert to numeric
+    total_cases_numeric = case_when(
+     str_detect(total_cases, 'k$') ~ as.numeric(str_remove(total_cases, 'k')) * 1000,
+    TRUE ~ as.numeric(total_cases)
+  ))
+
+
+# Filter the dataset for the year 2015
+data_2015_death <- subset(newborn_deaths_long, year == 2015)
+
+# Find the country with the highest total_cases_numeric in 2015
+max_country_death <- data_2015_death[which.max(data_2015_death$total_cases_numeric), ]
+max_country_death <- max_country_death[1][1]
+
+# Find the country with the lowest total_cases_numeric in 2015
+min_country_death <- data_2015_death[which.min(data_2015_death$total_cases_numeric), ]
+
+cat("Country with highest total cases in 2015:", max_country_death$country, "with", max_country_death$total_cases_numeric, "cases\n")
+cat("Country with lowest total cases in 2015:", min_country_death$country, "with", min_country_death$total_cases_numeric, "cases\n")
+
+# Calculate the total cases numeric for all countries in 2015
+total_cases_2015 <- sum(data_2015_death$total_cases_numeric, na.rm = TRUE)
+cat("Total cases numeric for all countries in 2015:", total_cases_2015, "\n")
+
+# Filter the dataset for the year 2015
+data_2015 <- subset(sanitation_long, year == 2015)
+
+# Find the country with the highest sanitation_levels in 2015
+max_country_sanitation <- data_2015[which.max(data_2015$sanitation_levels), ]
+
+# Find the country with the lowest sanitation_levels in 2015
+min_country_sanitation <- data_2015[which.min(data_2015$sanitation_levels), ]
+
+cat("Country with highest sanitation levels in 2015:", max_country_sanitation$country, "with", max_country_sanitation$sanitation_levels, "sanitation levels\n")
+cat("Country with lowest sanitation levels in 2015:", min_country_sanitation$country, "with", min_country_sanitation$sanitation_levels, "sanitation levels\n")
+
+
+# Calculate the mean sanitation levels, ignoring NA values
+mean_sanitation <- mean(data_2015$sanitation_levels, na.rm = TRUE)
+mean_sanitation <- round(mean_sanitation, 2)
+# Print the mean sanitation level
+print(mean_sanitation)
+
+```
+
+```{r results='hide', message=FALSE, warning = FALSE}
+# Required libraries
+library(dplyr)
+library(countrycode)
+library(ggplot2)
+library(plotly)
+library(rnaturalearth)
+library(sf)
+
+# Add ISO code
+sanitation_iso <- sanitation_long %>%
+  mutate(iso = countrycode(country, "country.name", "iso3c"))
+
+newborn_deaths_iso <- newborn_deaths_long %>%
+  mutate(iso = countrycode(country, "country.name", "iso3c"))
+
+# Join datasets
+sanitation_newborn_deaths <- left_join(newborn_deaths_iso, sanitation_iso, by = c("iso", "year"))
+
+# Adding Country Polygons
+world <- rnaturalearth::ne_countries(returnclass = "sf")
+
+# Identify and filter out rows with iso codes not present in the world dataset
+iso_to_remove <- setdiff(sanitation_newborn_deaths$iso, world$iso_a3)
+
+sanitation_newborn_deaths <- sanitation_newborn_deaths %>%
+  filter(!iso %in% iso_to_remove)
+
+# Join with world dataset
+world_sanitation_newborn_deaths <- left_join(sanitation_newborn_deaths, world, by = c("iso" = "iso_a3")) %>%
+  filter(year == max(year, na.rm = TRUE))
+
+# Create tooltip label
+world_sanitation_newborn_deaths <- world_sanitation_newborn_deaths %>%
+  mutate(tooltip_label = paste0(country.x, ": ", total_cases_numeric))
+
+# Create ggplot
+world_sanitation_newborn_deaths_plot <- ggplot(world_sanitation_newborn_deaths) +
+  geom_sf(aes(fill = total_cases_numeric, geometry = geometry, text = tooltip_label)) + 
+  theme_void() +
+  labs(fill = "Number of Cases") + 
+  theme(legend.position = "none")
+
+# Convert to plotly with tooltip
+world_sanitation_newborn_deaths_plot_ggplotly <- ggplotly(world_sanitation_newborn_deaths_plot, tooltip = "text") %>%
+  layout(hoverlabel = list(bgcolor = "white"))
+
+world_sanitation_newborn_deaths_plot_ggplotly
+```
+
+```{r results='hide', message=FALSE, warning = FALSE}
+# Create tooltip label
+world_sanitation_deaths <- world_sanitation_newborn_deaths %>%
+  mutate(tooltip_label = paste0(country.x, ": ", sanitation_levels))
+
+# Create ggplot
+world_sanitation_deaths_plot <- ggplot(world_sanitation_deaths) +
+  geom_sf(aes(fill = sanitation_levels, geometry = geometry, text = tooltip_label)) + 
+  theme_void() +
+  labs(fill = "Number of Cases") + 
+  theme(legend.position = "none")
+
+# Convert to plotly with tooltip
+world_sanitation_deaths_plot_ggplotly <- ggplotly(world_sanitation_deaths_plot, tooltip = "text") %>%
+  layout(hoverlabel = list(bgcolor = "white"))
+
+world_sanitation_deaths_plot_ggplotly
+```
+
+```{r results='hide', message=FALSE, warning = FALSE}
+# Calculate the number of newborn deaths by country for the 20 highest countries
+cases_by_country <- data_2015_death %>%
+  group_by(country)  %>%
+  arrange(desc(total_cases_numeric)) %>%
+  head(20) %>%
+  mutate(tooltip_label = paste0(country, ": ", total_cases_numeric))
+
+
+# Creating the ggplot
+p <- ggplot(cases_by_country, aes(y = reorder(country, total_cases_numeric), x = total_cases_numeric, text = tooltip_label)) +
+  geom_bar(stat = "identity", fill = "#3f71ab") +
+  labs(x = "Number of Newborn deaths", y = "") +
+  theme_minimal()
+
+# Convert ggplot to ggplotly
+cases_by_country_ggplotly <- ggplotly(p, tooltip = "text")
+
+# Display the plot
+cases_by_country_ggplotly
+```
+
+```{r results='hide', message=FALSE, warning = FALSE}
+# Show the 20 countries with the lowest sanitation levels 
+sanitation_by_country <- world_sanitation_newborn_deaths %>%
+  group_by(name)  %>%
+  arrange(sanitation_levels) %>%
+  head(20) %>%
+  mutate(tooltip_label = paste0(name, ": ", sanitation_levels))
+
+
+# Creating the ggplot
+p <- ggplot(sanitation_by_country, aes(y = reorder(name, -sanitation_levels), x = sanitation_levels, text = tooltip_label)) +
+  geom_bar(stat = "identity", fill = "#3f71ab") +
+  labs(x = "Sanitation levels", y = "") +
+  theme_minimal()
+
+# Convert ggplot to ggplotly
+sanitation_by_country_ggplotly <- ggplotly(p, tooltip = "text")
+
+# Display the plot
+sanitation_by_country_ggplotly
+```
+
+# NEWBORN DEATHS
+
+## Row 1 {height="20%"}
+
+```{r}
+value_box(
+  title = "Total Cases of newborn deaths in 2015",
+  value = total_cases_2015,
+  showcase = bsicons::bs_icon("globe"),
+  theme = value_box_theme(bg = "#518fd6")
+)
+```
+
+```{r}
+value_box(
+  title = "Country with highest # of newborn deaths 2015",
+  value = max_country_death,
+  showcase = bsicons::bs_icon("globe-asia-australia"),
+  theme = value_box_theme(bg = "#518fd6")
+)
+```
+
+## Row 2 {height="80%"}
+
+###  {width="34%"}
+
+```{r title = "The 20 countries with the highest number of newborn deaths"}
+cases_by_country_ggplotly
+```
+
+###  {width="66%"}
+
+```{r title = "Number of newborn deaths by country in 2015"}
+world_sanitation_newborn_deaths_plot_ggplotly
+
+```
+
+# SANITATION LEVELS
+
+## Row 1 {height="20%"}
+
+```{r}
+value_box(
+  title = "Country with the lowest sanitation level in 2015",
+  value = min_country_sanitation,
+  showcase = bsicons::bs_icon("globe-europe-africa"),
+  theme = value_box_theme(bg = "#518fd6")
+)
+```
+
+```{r}
+value_box(
+  title = "Mean sanitation levels worldwide in 2015",
+  value = mean_sanitation,
+  showcase = bsicons::bs_icon("globe"),
+  theme = value_box_theme(bg = "#518fd6")
+)
+```
+
+## Row 2 {height="80%"}
+
+###  {width="66%"}
+
+```{r title = "Sanitation levels by country in 2015"}
+world_sanitation_deaths_plot_ggplotly
+```
+
+###  {width="34%"}
+
+```{r title = "The 20 countries with the lowest sanitation levels in 2015"}
+sanitation_by_country_ggplotly
+```
+
+# DOWNLOAD DATA
+
+```{r}
+library(htmltools)
+
+htmltools::browsable(
+  tagList(
+    reactable(sanitation_newborn_deaths, 
+              elementId = "sanitation_newborn_deaths-table", 
+              searchable = T, 
+              filterable = T), 
+    
+tags$button("Download as CSV", 
+            onclick = "Reactable.downloadDataCSV('sanitation_newborn_deaths-table')")
+  )
+)
+```
